@@ -32,13 +32,13 @@ Some inferences we explored are:
 
 ## [DATA603 - Statistical Modeling With Data - Project TBD]()
 
-### Title TBD
+### TBD Multi-Linear Regression Project
 
-Early discussion phase
+Early group discussion phase
 
 
 ## [DATA604 - Big Data Management - Project COVID](data604_project_covid)
 
 ### Effects of COVID-19 on Different Industries of Canada
 
-Early discussion phase
+Early group discussion phase
