@@ -1,0 +1,525 @@
+---
+title: |
+  | \vspace{5cm} Data 602 L02 - Inferences on Marathon Runner Participation and Performance
+author: "Team 1 - Tomasz Szymczyk, Daniel Zhou, David St. George"
+date: "20/10/2021"
+output:
+  html_document:
+    df_print: paged
+geometry: margin=1.2cm
+---
+
+\newpage
+
+\tableofcontents
+
+\newpage
+
+```{r setup, include=FALSE}
+library(formatR)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 40), tidy = TRUE,
+                      echo = TRUE)
+```
+
+# Introduction (Purpose / Motivation)
+Competitive marathon runners are a diverse group of people, originating from all corners of the globe and age ranges. This paper attempts to draw relationships and predict performance between gender, age, and/or nationality of citizenship for competitive marathon runners.
+
+Population: All competitive full marathon finishing runners.
+
+
+Parameters of interest:
+
+1) Population mean times of completion based on gender, nationality, and/or age
+
+2) Population proportions based on gender, nationality, and/or age
+
+Inferences:
+
+1) Does gender influence the mean completion time? Does gender influence the variance of completion time? Does age influence the mean completion time?
+
+2) Are the population proportions of men and women finishers equal across continents? As gender equality is an important topic, one would hope we see similar participation from across the globe.
+
+3) As the demographic of marathon runners is seemingly changing, does the age distribution of finishers reflect a normal distribution?
+
+4) Can we establish a relationship between age and performance using simple linear regression?
+
+All of the inferences contained in this paper will be conducted at a 95% level of confidence.
+
+\newpage
+
+# Data Collection / Wrangling
+
+The Boston Marathon is the oldest and best-known marathon event and was chosen due to its robust history. 
+Data collection is through the Boston Athletic Association.
+
+Data about the runners is collected at registration time. Finishing times are recorded using electronic tag devices that are attached to the numbered bibs that runners wear.
+
+The representative sample data collected for this report came from an official source - the Boston Marathon database. A full .csv of all 26,657 finishing runners was downloaded and wrangled. It contains the name, age, gender, country, city, and state (where available), expected time, finish time, overall place, gender place and division place, Country of Residence, Country of Citizenship, and identifies participants that are physically impaired. A complete .csv file can be downloaded from the link in the reference section of this paper.
+
+It is important to note that with respect to our definition of population, our data set by its nature is more of a convenient sample due to the fact that marathon runners compete on a voluntary basis. In addition, while our definition of population includes all competitive runners, anywhere, during any season, we recognize there are limitations to the application of our inferences. 
+
+Challenges encountered with the data set:
+
+1) Row 26,143 had a data entry error with one column being shifted to the right, resulting in data type mismatches and making it so RStudio couldn't interpret the file. We were able to delete the erroneous cell of data and realign the data within RStudio.
+
+2) The data set includes Country of Residency and Country of Citizenship. We chose to focus only on Country of Citizenship as it is our belief that is more indicative of the true identity of an individual (upbringing and cultural influences). 
+
+3) For contingency tables, using all of the countries listed was far too much (over 100) so we added a "Continent of Citizenship" column to group the data at a higher level and allow for statistical inferences in a more concise manner. In cases where countries belong to two continents, the team decided which continent to assign by general consensus.
+
+4) Completion times of the marathon were in the format "H : M : S" and we converted the time to total seconds using the lubridate package/library.
+
+5) Visually or mobility impaired runners as well as 'duo' teams were excluded from our data set.\
+
+
+```{r echo=TRUE}
+
+runnerRawData = read.csv("Runners_all_results.csv")
+continentLookup = read.csv("ContinentLookup.csv")
+
+# Bullet #1: there is erroneous data on row 26143 of runnerRawData, fix that here
+x <- seq(18, 4, -1)
+for (i in x) {
+  runnerRawData[26143,i] = runnerRawData[26143,i-1]
+  }
+runnerRawData[26143,2] = "Pamela OConnell"
+runnerRawData[26143,3] = "OConnell, Pamela"
+
+# Bullet #5: Excluding visually or mobility impaired participants
+runnerRawData = runnerRawData[!(runnerRawData$SubGroupLabel %in% c('DUO',
+                                                                   'VI',
+                                                                   'MI')),]
+
+#convert runner AgeOnRaceDay to integer
+runnerRawData$AgeOnRaceDay = as.integer(runnerRawData$AgeOnRaceDay)
+runnerRawData$RankOverall = as.integer(runnerRawData$RankOverall)
+runnerRawData$RankOverGender = as.integer(runnerRawData$RankOverGender)
+runnerRawData$RankOverDivision = as.integer(runnerRawData$RankOverDivision)
+
+#bin data by age group
+runnerRawData$AgeGroup=cut(as.integer(runnerRawData$AgeOnRaceDay),breaks=c(1,39,44,49,54,59,64,69,74,79,100),labels=c("18-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80-100"))
+
+# Bullet #3: merge df to get continent onto the same df as runners
+runner = merge(runnerRawData,continentLookup)
+
+# Bullet #4: Convert hour:minute:seconds to total seconds
+#install.packages("lubridate")
+library(lubridate)
+runner$TimeSeconds = hour(strptime(runner$OfficialTime,"%H:%M:%OS"))*3600+minute(strptime(runner$OfficialTime,"%H:%M:%OS"))*60+second(strptime(runner$OfficialTime,"%H:%M:%OS"))
+
+# output to csv if needed
+#write.csv(runner,"Runners_all_results_wrangled.csv", row.names = FALSE)
+
+attach(runner)
+```
+\newpage
+
+# Statistical Analysis
+
+## Test #1: Hypothesis Testing & Confidence Intervals - Examining Gender and Finishing Time
+
+For our first question, we want to examine the relationship between gender and race time. We know that men have an advantage in terms of short distance running, we want to see if that advantage carries over to long distance endurance running. We suspect that the mean time to finish for men is faster than women.\
+
+We set up for hypothesis testing:\
+the null hypothesis is: $$H_0 : \mu_{time, male} = \mu_{time, female}$$ 
+the alternative hypothesis is: $$H_a : \mu_{time, male} < \mu_{time, female}$$ 
+We will use our entire dataset as a sample split based on gender, and compare the mean completion time of men and women at the $\alpha = 0.05$ level. We will use the Welch Two Sample t-test for this.\
+
+
+```{r echo=TRUE}
+# hypothesis testing
+alpha = 0.05
+c = 1 - alpha
+mTime = TimeSeconds[Gender=="M"]
+wTime = TimeSeconds[Gender=="F"]
+gender_mean_test = t.test(mTime, wTime, alternative= 'less', conf.level = c)
+print(gender_mean_test)
+```
+Therefore, from our analysis above, the null hypotheses is: $H_0 : \mu_{time, male} = \mu_{time, female}$ the alternative hypothesis is: $H_a : \mu_{time, male} < \mu_{time, female}$. We can see that, using men's mean time minus women's mean time for the difference of the mean time to finish the race, the 95 percent confidence interval for our hypothesis came out to be (-Inf, -1296.488), therefore we can say conclusively that at $\alpha$ = 0.05 level, the men's mean time is faster than women's mean time.\
+
+Now, that is a somewhat expected result given what we already know about short distance running.\
+We want to further analyze the variance of mean completion time between men and women to see if there are differences between the genders at the $\alpha = 0.05$ level. We will use the F test for this.\ 
+
+Once again, we set up for hypothesis testing:\
+the null hypotheses is: $$H_0 : \sigma^2_{time, male} = \sigma^2_{time, female}$$ 
+the alternative hypothesis is: $$H_a : \sigma^2_{time, male} \ne \sigma^2_{time, female}$$ 
+
+```{r echo=TRUE}
+# hypothesis testing
+gender_var_test = var.test(mTime, wTime, ratio=1, alternative = "two.sided", conf.level = c)
+print(gender_var_test)
+
+```
+Therefore, from our analysis above, the null hypotheses is: $H_0 : \sigma^2_{time, male} = \sigma^2_{time, female}$ 
+the alternative hypothesis is: $H_a : \sigma^2_{time, male} \ne \sigma^2_{time, female}$. We can see that, by calculating the ratio between men's sample time variance vs women's sample time variance, the 95 percent confidence interval for our hypothesis came out to be (1.196150, 1.280829), therefore we can conclusively say that at $\alpha$ = 0.05 level, the men's time variance and women's time variance are not equal, and that the men have a higher variance in their race completion times.\
+
+This is an interesting result, the variance not being equal may be suggesting that the male runners have a more varied skill levels.\
+
+Lets plot out the finishing times on histogram to see if we can spot any patterns.
+
+```{r echo=TRUE}
+# plot separate histogram
+
+# Bars colored by gender
+
+# mens histogram
+layout(matrix(c(1,1),nrow=2,ncol=1,byrow=TRUE))
+p1 <- hist(mTime, freq = FALSE, col=rgb(0,0,1,1/4), ylim=c(0, 0.00025), xlim=c(5000, 25000), 
+           main = "Men Completion Time Histogram", 
+           xlab = "Completion Time (s)", ylab = "Probability Density") 
+
+# womens histogram
+p2 <- hist(wTime, freq = FALSE, col=rgb(1,0,0,1/4), ylim=c(0, 0.00025), xlim=c(5000, 25000), 
+           main = "Women Completion Time Histogram",
+           xlab = "Completion Time (s)", ylab = "Probability Density")
+
+# plot combined histogram
+par(mfrow=c(1,1))
+plot(p1, freq = FALSE, col=rgb(0,0,1,1/4), ylim=c(0, 0.00025), xlim=c(5000, 25000),
+     main = "Men vs Women Completion Time Histogram", 
+     xlab = "Completion Time (s)", ylab = "Probability Density")  # first histogram
+plot(p2, freq = FALSE, col=rgb(1,0,0,1/4), add=T)  # second histogram
+
+legend("topright", c("Men", "Women", "Overlap"), col=c(rgb(0,0,1,1/4), rgb(1,0,0,1/4), rgb(0.8,0,0.8,2/4)), lwd=10)
+
+```
+\
+From the histogram above, we can observe that the difference in variance mostly comes from the fact that amongst the people with slower times, there are roughly similar proportion of men and women, while amongst the people with faster times, the proportion of men are a lot more than women. Along with the mean and variance difference calculated above, this leads us to conclude that the fastest men run marathons faster than the fastest women, while the slowest men run marathons at roughly the same speed as the slowest women\
+
+Now we want to see if there is trend between age and gender completion time means. Is there a specific age where men overtake women in getting a faster marathon completion time or vice versa? We will conduct multiple large sample estimation of $\mu$, grouped based based on age. First we split the dataset between male runners and female runners, then we group the completions times based on the age of the runners, then for any age group with samples size $n \ge 30$, we use the below equation to do conduct large sample estimation of $\mu$ interval, at the $\alpha = 0.05$ level.
+
+$$(\bar{x} - z_{\frac{\alpha}{2}}\frac{\sigma}{\sqrt{n}}, \bar{x} + z_{\frac{\alpha}{2}}\frac{\sigma}{\sqrt{n}})$$
+After we get all the intervals for the different ages, we will plot the intervals out to look for trend.
+```{r echo=TRUE}
+# lets calculate mean and standard deviations based on age and gender of runner
+mAgeTime = data.frame(unique(AgeOnRaceDay[Gender=="M"]))
+wAgeTime = data.frame(unique(AgeOnRaceDay[Gender=="F"]))
+colnames(mAgeTime) <- c('Age')
+colnames(wAgeTime) <- c('Age')
+
+# for the men's mean CI
+mMeanLow <- list()
+mMeanUpper <- list()
+mSamples <- list()
+for (age in mAgeTime[,1]) {
+  times = TimeSeconds[Gender=="M" & AgeOnRaceDay == age]
+  n = length(times)
+  x_bar = mean(times)
+  s = sd(times)
+  z_lower = qnorm(alpha/2)
+  z_upper = qnorm(1-alpha/2)
+  ci_lower = x_bar + z_lower*(s/sqrt(n))
+  ci_upper = x_bar + z_upper*(s/sqrt(n))
+  mMeanLow = append(mMeanLow, ci_lower)
+  mMeanUpper = append(mMeanUpper, ci_upper)
+  mSamples= append(mSamples, n)
+}
+mAgeTime['timeMeanLower'] = as.numeric(mMeanLow)
+mAgeTime['timeMeanUpper'] = as.numeric(mMeanUpper)
+mAgeTime['samples'] = as.numeric(mSamples)
+mAgeTime <- na.omit(mAgeTime) 
+mAgeTime <- mAgeTime[order(mAgeTime$Age),]
+# filter out sample size <30
+mAgeTime = mAgeTime[mAgeTime$samples >= 30,]
+
+
+# for the women's mean CI
+wMeanLow <- list()
+wMeanUpper <- list()
+wSamples <- list()
+for (age in wAgeTime[,1]) {
+  times = TimeSeconds[Gender=="F" & AgeOnRaceDay == age]
+  n = length(times)
+  x_bar = mean(times)
+  s = sd(times)
+  z_lower = qnorm(alpha/2)
+  z_upper = qnorm(1-alpha/2)
+  ci_lower = x_bar + z_lower*(s/sqrt(n))
+  ci_upper = x_bar + z_upper*(s/sqrt(n))
+  wMeanLow = append(wMeanLow, ci_lower)
+  wMeanUpper = append(wMeanUpper, ci_upper)
+  wSamples= append(wSamples, n)
+}
+wAgeTime['timeMeanLower'] = as.numeric(wMeanLow)
+wAgeTime['timeMeanUpper'] = as.numeric(wMeanUpper)
+wAgeTime['samples'] = as.numeric(wSamples)
+wAgeTime <- na.omit(wAgeTime) 
+wAgeTime <- wAgeTime[order(wAgeTime$Age),]
+
+# filter out sample size <30
+wAgeTime = wAgeTime[wAgeTime$samples >= 30,]
+
+# plot the 95% confidence intervals
+matplot(mAgeTime$Age, 
+        mAgeTime[c("timeMeanLower","timeMeanUpper")], 
+        pch=c(2, 6), 
+        col=c("blue", "blue"),
+        main="95% Confidence Intervals for Mean Race Time vs Age by Gender", 
+        xlab="Age", 
+        ylab="Race Time (s)", 
+        ylim=c(11000, 18000))
+points(wAgeTime$Age, wAgeTime$timeMeanLower, col="red", pch=2)
+points(wAgeTime$Age, wAgeTime$timeMeanUpper, col="red", pch=6)
+
+legend("topleft", legend=c("Male Uplimit", "Male Lowlimit", "Female Uplimit", "Female Lowlimit"),
+       col=c("blue", "blue", "red", "red"), pch=c(6, 2, 6, 2), cex=0.8)
+
+```
+\
+From the above plot of our large sample estimation of $\mu$ interval, our answer is pretty clear, as there is no overlap between the 95% confidence intervals of men and women at any comparable age range, we can conclusively say that at all ages between 21 and 66 (that's the age range where we have valid results of 95% confidence intervals of mean completion time in our samples for both men and women, valid as in where sample size $n \ge 30$). So for men and women of the same age, the mean time of men who complete marathons is faster than women.\
+
+\newpage
+
+## Test #2: Test of Homogeneity - Gender Proportions Between Continents
+
+For the second test, we will look to see if there is a difference in the proportion
+of genders in the sample by continent. For this, we will use a test of homogeneity.
+As mentioned in the Data Collection/Wrangling section, we have added a *Continent of Citizenship*
+column, building upon *Country of Citizenship* provided in the raw data. 
+
+$H_{o}$: There is no difference in the gender proportions between continents.\
+$H_{a}$: There is a difference in at least one of the continent gender proportions.\
+
+```{r echo=TRUE}
+
+dfGenderContinent = data.frame(Gender,ContinentOfCtz)
+a = table(dfGenderContinent)
+print(a)
+
+chisq.test(a)
+
+chisq.test(a)$expected
+
+chisq.test(a)$residuals
+
+chisq.test(a)$stdres
+
+mosaicplot(a,shade=TRUE,las=1,ylab="Country of Citizenship",main = "Continent of Citizenship vs Gender for Marathon Runners")
+```
+\
+The very small P-value (`r chisq.test(a)$p.value`) soundly rejects the null hypothesis at 5% level -  there are differences in the gender ratios of competitive marathon runner participants across continents. One interesting observation is that North America is the only continent where the Female residuals are positive, indicating that it's the most progressive of all of the continents with respect to gender equality.
+
+The mosaic plot also informs us that the total sample of the Boston 2019 Marathon data set indicates that overall, there are slightly more males participating than females as told by the width of the gender axis. However, this is heavily influenced by the number of North American participants, which just so happens to also be the continent with the most equal representation of genders. 
+
+
+\newpage
+## Test #3: Test of Normality - Age Distribution of Participants
+\
+According to Anderson, J.J. (2019), the average age of marathon participants
+has increased between 1986 and 2018 by approximately 4.1 years. Although the intention
+of the study referenced was to focus on those who are recreational marathon runners 
+(males with a finishing time of greater than 2:30:00 and females with a time greater
+than 2:45:00), it is an interesting phenomenon nevertheless. \
+\
+As an aside, the percentage of runners in our sample who would be considered $recreational$ 
+are: 
+```{r echo=TRUE}
+# Male 'Recreational' %
+(length(mTime[mTime > 9000])/length(mTime))*100
+
+# Female 'Recreational' %
+(length(wTime[wTime > 9900])/length(wTime))*100
+```
+
+Such a shift in the mean may lead us to believe that the distribution may reflect 
+something more representative of a typical normal distribution versus that of a right-skewed 
+distribution, which is what we may expect given:   
+
+*   Typically, a person cannot register for a marathon until they are 18 years of age.\
+*   A person's physical peak (and availability to participate) is between 20-35 years 
+old, prior to familial or employment commitments taking precedence.\
+
+This inference intends to check the sample to see if the Age Distribution is indeed
+normal. For this, we cannot use the Shapiro-Wilk Test, because the sample size in 
+this instance is > 5000. As an alternative, we can create a quantile-quantile 
+normality plot to assess normality. \
+
+$Note:$ For the purposes of this inference, we will need to consider age as a continuous 
+variable, contrary to what is captured in the raw data set and considering sample 
+measurement practicality (ie. birth time stamp of each element of the sample).
+
+``` {r fig1, fig.height = 6.5, fig.width = 10, fig.align = 'center'}
+hist(runner$AgeOnRaceDay,
+     xlab='Age on Race Day', ylim = c(0,0.035),
+     main='Histogram of Boston Marathon Participants by Age',
+     prob=TRUE)
+lines(density(runner$AgeOnRaceDay), col='red')
+```
+
+The histogram resembles a reasonably normal distribution, but it still demonstrates
+a bit of the right-tailed phenomenon discussed previously. We will progress and review a 
+qqnorm plot of the entire data set. 
+
+``` {r fig2, fig.height = 6, fig.width = 8.5, fig.align = 'center'}
+qqnorm(runner$AgeOnRaceDay)
+```
+
+The qqnorm plot also demonstrates normality as the line appears very straight, 
+with some very slight deviation at each end. As a result, we can deduce that the
+age distribution reasonably represents a normal distribution. Confirming normality
+may be useful for developing further models or making inferences about the population
+in the future.
+
+\newpage
+## Test #4: Linear Regression - Age on Race Day and Finishing Time
+
+For this test we will explore within the sample whether or not there is a relationship 
+between a finisher's Age on Race Day and their Finishing Time in seconds. As the 
+result in Test #1 confirmed, it would be more fitting to split this test up into 
+two parts - one for each gender. 
+
+``` {r echo=TRUE}
+male_times = runner[runner$Gender=="M",]
+female_times = runner[runner$Gender=="F",]
+```
+### Part 1: Males
+``` {r fig3, fig.height = 4, fig.width = 6, fig.align = 'center'}
+plot(TimeSeconds ~ AgeOnRaceDay, data=male_times,
+     main='Age on Race Day vs. Finishing Time, Males',
+     xlab='Age on Race Day (yrs)',
+     ylab='Finishing Time (s)')
+male_fit = lm(TimeSeconds ~ AgeOnRaceDay, data = male_times)
+abline(male_fit$coeff)
+```
+
+The scatterplot and model line fit does indicate a slight positive, linear relationship.
+Reviewing the model diagnostic results:
+
+``` {r echo=TRUE}
+summary(male_fit)
+```
+
+The associated p-values for the y-intercept (`r summary(male_fit)$coefficients[1,4]`) 
+and slope (`r summary(male_fit)$coefficients[2,4]`) indicate significance. However,
+the $r^{2}$ value of `r round(summary(male_fit)$r.squared,4)` further justifies
+our suggestion that the relationship between the two variables may not be strong.\
+\
+The diagnostic plots for the model are as follows:\
+``` {r fig-male-plot, fig.show="hold", fig.height = 10, fig.align = 'center'}
+par(mfrow=c(2,2))
+plot(male_fit)
+```
+
+From the plots, the model assumptions hold reasonably well with the exception of 
+normality, demonstrated in the Normal Q-Q Plot at the top-right. There does not look 
+to be any specific extreme outlier points causing issues in the diagnostic plots.
+\
+\
+Between the lack of normality shown in the Q-Q Plot, as well as $r^{2}$ value, this
+is not a great model to approximate Finishing Time. 
+
+\newpage
+
+### Part 2: Females
+``` {r fig4, fig.height = 4, fig.width = 6, fig.align = 'center'}
+plot(TimeSeconds ~ AgeOnRaceDay, data=female_times,
+     main='Age on Race Day vs. Finishing Time, Females',
+     xlab='Age on Race Day (yrs)',
+     ylab='Finishing Time (s)')
+female_fit = lm(TimeSeconds ~ AgeOnRaceDay, data = female_times)
+abline(female_fit$coeff)
+```
+\
+The scatterplot and model line fit does indicate a slight positive, linear relationship
+that is similar to that of the males. However, the female plot shows some 
+slight differences with detailed inspection. It looks as if the female plot takes
+on more of a uniform distribution (of recorded finishing times), specifically in 
+the age range of 18-30. Reviewing the model diagnostic results:
+\
+``` {r echo=TRUE}
+summary(female_fit)
+```
+
+The associated p-values for the y-intercept (`r summary(female_fit)$coefficients[1,4]`) 
+and slope (`r summary(female_fit)$coefficients[2,4]`) certainly indicate significance. 
+However, the $r^{2}$ value of `r round(summary(female_fit)$r.squared,4)` is significantly 
+lower than the $r^{2}$ value in the male regression model. This is not a great
+model, in all practicality. \
+
+The diagnostic plots for the model are as follows:\
+``` {r fig-female-plot, fig.show="hold", fig.height = 10, fig.align = 'center'}
+par(mfrow=c(2,2))
+plot(female_fit)
+```
+
+From the plots, the model assumptions hold reasonably well with the exception of 
+normality (once again), demonstrated in the Normal Q-Q Plot at the top-right. 
+There does not look to be any specific extreme outlier points causing issues in the 
+diagnostic plots. It should be stated that the female model definitely  to perform 
+better in trying to satisfy this assumption than the male regression model. 
+\
+\
+Between the lack of normality shown in the Q-Q Plot, as well as $r^{2}$ value, this
+is not a great model to approximate Finishing Time. 
+\
+\
+Both of these models do not demonstrate a strong relationship between Age and Finishing
+Time, as they seem to account for approximately (15% and 5%) for males and females, 
+respectively. Additional factors could be added to this model, provided data is
+available, to further its development and to produce a more accurate result.
+For example: BMI, Hours of Training Prior To Race might both be useful variables 
+to supplement the data in the existing data set. 
+\
+
+
+\newpage
+# Conclusion
+
+Each of the activities completed within the project were beneficial in gaining a 
+broader understanding of the sample and, inherently, the population, as well. 
+\
+\
+The Hypothesis Test comparing the mean finishing time for male finishers versus females 
+and creation of a subsequent Confidence Interval in the first activity determined 
+that at the 95% level of confidence, the mean difference between Females and Males 
+in Finishing Time was between ($-\infty$, -1296.48) or ($-\infty$ and ~ -21 minutes). 
+It was also demonstrated visually through a plot that the confidence intervals never
+overlap at any particular age when comparing male and female mean finishing times.
+Through a test of variances, it was determined that variance of male finishers is 
+slightly higher than that of female finishers. This may be due to a wider interval 
+of results, particularly driven by faster finish times. Nevertheless, this is an 
+interesting phenomenon. 
+\
+\
+The Test of Homogeneity was used to conclude that there is a least one difference 
+in gender proportions of marathon finishers between continents. The subsequent
+mosiac plot produced provided insight that the near even split of male and female
+finishers from North America was unique in comparison to the other continents.
+\
+\
+A Test of Normality using the qqnorm plot confirmed that the Age Distribution of 
+participants in our data set reflected a normal distribution, which can facilitate 
+easy modelling and analysis down the road. 
+\
+\
+Finally, two Linear Regressions were carried out to explore if successful models could 
+be built for each gender using Age to predict Finishing Time. Unfortunately, Age
+turned out to be a fairly weak predictor of Finishing Time (specifically for females), 
+although it is a decent starting point. More variables are certainly required to 
+help improve the model.
+\
+\
+General learnings from this project:
+
+1) This project was an excellent opportunity to further practice manipulating and wrangling
+data in R for a real-world application.
+
+2) We were able to gain experience with imperfections of practical data when completing the statistical analysis.
+
+3) We gained exposure to the limitations of what we've learned so far with our unsuccessful simple linear regression. 
+We look forward to further developing our knowledge to understand how to deal with multiple variables.
+
+4) Our team was well rounded and we learned off each other. The work was distributed fairly and all members put
+their best efforts forward to contribute. We all gained value learning best practices on formatting Rscript 
+and new libraries off each other.
+
+
+
+
+\newpage
+# References
+
+Anderson, J.J. (2021, September 21) *The State of Running 2019.* RunRepeat.com. 
+https://runrepeat.com/state-of-running
+
+_Boston Marathon 2019: Results Search (Media)_. (n.d.). Retrieved October 14, 2021, from http://registration.baa.org/2019/cf/Media/Runners_all_results.csv
+
