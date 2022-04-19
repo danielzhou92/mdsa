@@ -1,6 +1,6 @@
 # MDSA (2021-2023) Project Descriptions
 
-This repository is used to store my completed projects (mostly team projects) for the 2021-2022 University of Calgary Master of Data Science and Analytics Program.
+This repository is used to store my completed projects (mostly team projects) for the 2021-2023 University of Calgary Master of Data Science and Analytics Program.
 
 [Program homepage](https://science.ucalgary.ca/data-science/programs/professional-programs/mdsa)
 
